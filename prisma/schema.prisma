@@ -1,0 +1,300 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MatchingMethod {
+  AVERAGE_COST
+  FIFO
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  DISABLED
+  REMOVED
+}
+
+enum TradeStatus {
+  OPEN
+  CLOSED
+}
+
+enum Direction {
+  LONG
+  SHORT
+}
+
+enum SyncStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  username      String   @unique
+  displayName   String
+  passwordHash  String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  timeZone       String         @default("America/Toronto")
+  baseCurrency   String         @default("CAD")
+  matchingMethod MatchingMethod @default(AVERAGE_COST)
+
+  isPublic        Boolean @default(false)
+  showDollars     Boolean @default(true)
+  hideOpenTrades  Boolean @default(true)
+  bio             String?
+
+  snaptradeUserId     String? @unique
+  snaptradeUserSecret String?
+
+  sessions    Session[]
+  connections BrokerConnection[]
+  accounts    Account[]
+  trades      Trade[]
+  tags        Tag[]
+  syncRuns    SyncRun[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  userAgent String?
+
+  @@index([userId])
+}
+
+model BrokerConnection {
+  id                        String           @id @default(cuid())
+  userId                    String
+  user                      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  snaptradeAuthorizationId  String           @unique
+  brokerageSlug             String
+  brokerageName             String
+  connectionType            String           @default("read")
+  status                    ConnectionStatus @default(ACTIVE)
+  disabledReason            String?
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
+  lastSyncedAt              DateTime?
+
+  accounts Account[]
+
+  @@index([userId])
+}
+
+model Account {
+  id                  String            @id @default(cuid())
+  userId              String
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectionId        String
+  connection          BrokerConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  snaptradeAccountId  String            @unique
+  name                String?
+  number              String?
+  institutionName     String
+  currency            String            @default("CAD")
+  rawType             String?
+  status              String?
+  balanceTotal        Float?
+  balanceCurrency     String?
+  firstTransactionAt  DateTime?
+  transactionsSyncedAt DateTime?
+  holdingsSyncedAt    DateTime?
+  lastSyncedAt        DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  activities Activity[]
+  positions  Position[]
+  trades     Trade[]
+
+  @@index([userId])
+}
+
+model Activity {
+  id                  String    @id @default(cuid())
+  accountId           String
+  account             Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  fingerprint         String
+  externalId          String?
+  externalReferenceId String?
+  type                String
+  symbol              String?
+  rawSymbol           String?
+  description         String?
+  securityType        String?
+  optionTicker        String?
+  optionType          String?
+  units               Float?
+  price               Float?
+  amount              Float?
+  fee                 Float?
+  currency            String?
+  fxRate              Float?
+  tradeDate           DateTime?
+  settlementDate      DateTime?
+  institution         String?
+  raw                 Json
+  firstSeenAt         DateTime  @default(now())
+  lastSeenAt          DateTime  @default(now())
+
+  fills TradeFill[]
+
+  @@unique([accountId, fingerprint])
+  @@index([accountId, tradeDate])
+  @@index([accountId, type])
+}
+
+model Position {
+  id                   String   @id @default(cuid())
+  accountId            String
+  account              Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  symbol               String
+  description          String?
+  securityType         String?
+  currency             String
+  units                Float
+  price                Float?
+  averagePurchasePrice Float?
+  openPnl              Float?
+  isOption             Boolean  @default(false)
+  updatedAt            DateTime @updatedAt
+
+  @@unique([accountId, symbol, currency])
+}
+
+model Trade {
+  id             String         @id @default(cuid())
+  tradeKey       String         @unique
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  matchingMethod MatchingMethod
+  instrumentKey  String
+  symbol         String
+  description    String?
+  assetClass     String
+  optionMeta     Json?
+  direction      Direction
+  status         TradeStatus
+  currency       String
+  multiplier     Float          @default(1)
+  quantity       Float
+  openQuantity   Float          @default(0)
+  avgEntryPrice  Float
+  avgExitPrice   Float?
+  costBasis      Float
+  proceeds       Float
+  grossPnl       Float
+  fees           Float
+  netPnl         Float
+  pnlPercent     Float?
+  fxRateToBase   Float          @default(1)
+  netPnlBase     Float
+  grossPnlBase   Float
+  feesBase       Float
+  costBasisBase  Float
+  openedAt       DateTime
+  closedAt       DateTime?
+  closeDayKey    String?
+  hasTime        Boolean        @default(true)
+  holdingSeconds Int?
+  executions     Int
+  warnings       String[]       @default([])
+
+  notes     String?
+  rating    Int?
+  setup     String?
+  mistakes  String?
+  tags      TradeTag[]
+  fills     TradeFill[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status, closedAt])
+  @@index([userId, closeDayKey])
+  @@index([accountId, matchingMethod])
+  @@index([userId, symbol])
+}
+
+model TradeFill {
+  id         String   @id @default(cuid())
+  tradeId    String
+  trade      Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  activityId String
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  role       String
+  side       String
+  kind       String
+  quantity   Float
+  price      Float
+  fee        Float
+  executedAt DateTime
+  hasTime    Boolean
+
+  @@index([tradeId])
+  @@index([activityId])
+}
+
+model Tag {
+  id     String     @id @default(cuid())
+  userId String
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name   String
+  color  String?
+  trades TradeTag[]
+
+  @@unique([userId, name])
+}
+
+model TradeTag {
+  tradeId String
+  trade   Trade  @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  tagId   String
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([tradeId, tagId])
+}
+
+model FxRate {
+  id    String   @id @default(cuid())
+  base  String
+  quote String
+  date  DateTime @db.Date
+  rate  Float
+  source String  @default("bankofcanada")
+
+  @@unique([base, quote, date])
+  @@index([base, quote, date])
+}
+
+model SyncRun {
+  id                 String     @id @default(cuid())
+  userId             String
+  user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId          String?
+  trigger            String
+  status             SyncStatus @default(RUNNING)
+  startedAt          DateTime   @default(now())
+  finishedAt         DateTime?
+  activitiesFetched  Int        @default(0)
+  activitiesInserted Int        @default(0)
+  tradesBuilt        Int        @default(0)
+  error              String?
+
+  @@index([userId, startedAt])
+}
