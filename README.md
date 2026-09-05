@@ -2,7 +2,7 @@
 
 A Kinfo-style web app: broker-verified trading journal, analytics and public trader verification. Trades import straight from **Wealthsimple** through **SnapTrade** with a read-only connection. Nothing can be typed in, edited or deleted, so the journal, the statistics and the public profile are a record other people can trust.
 
-Stack: Next.js 15 (App Router, server actions), TypeScript, Tailwind, Prisma + PostgreSQL, Recharts, `snaptrade-typescript-sdk`. Node ≥ 22.18 (the engine's tests run on Node's built-in test runner with type stripping — no test framework to install).
+Stack: Next.js 15 (App Router, server actions), TypeScript, Tailwind, Prisma + PostgreSQL, Recharts, `snaptrade-typescript-sdk`. Node ≥ 22.6 (the engine's tests and the CLI scripts run on Node's built-in TypeScript type stripping — no test framework or ts-node to install).
 
 ---
 
@@ -119,14 +119,14 @@ Connection flow:
 1. First connect: `authentication.registerSnapTradeUser({ userId: "attest-<id>" })`. The returned `userSecret` is encrypted with `APP_ENCRYPTION_KEY` (AES-256-GCM) before it is stored.
 2. `authentication.loginSnapTradeUser({ broker, connectionType: "read", immediateRedirect: true, customRedirect: APP_URL + "/connect/callback", reconnect? })` → the user is sent to the returned `redirectURI` (valid 5 minutes). The `broker` slug is resolved at runtime by searching `referenceData.listAllBrokerages()` for "Wealthsimple"; set `SNAPTRADE_WEALTHSIMPLE_SLUG` to pin it.
 3. `/connect/callback` reads `status` / `connection_id` / `error_code`, then `connections.listBrokerageAuthorizations` + `accountInformation.listUserAccounts` to upsert connections and accounts, and kicks off the first sync.
-4. `accountInformation.getAccountActivities` (paged), `getUserAccountPositions`, and `refreshBrokerageAuthorization` for the optional "Refresh from broker" button (SnapTrade bills each refresh call; data otherwise refreshes once per day).
+4. `accountInformation.getAccountActivities` (paged), `getAllAccountPositions`, `syncBrokerageAuthorizationTransactions` (requested at the start of every manual/scheduled sync so the previous day's transactions are in), and `refreshBrokerageAuthorization` for the optional "Refresh from broker" button (SnapTrade bills each refresh call; data otherwise refreshes once per day).
 
 Keeping data fresh:
 
 * `GET /api/cron/sync` with `Authorization: Bearer $CRON_SECRET` syncs every connected user — schedule it daily (Vercel cron, GitHub Actions, `cron`, …) after SnapTrade's daily refresh.
 * `POST /api/webhooks/snaptrade` accepts SnapTrade webhooks (`CONNECTION_ADDED`, `CONNECTION_BROKEN`, `ACCOUNT_TRANSACTIONS_UPDATED`, `ACCOUNT_HOLDINGS_UPDATED`, …) and syncs the affected account; the body's `webhookSecret` is compared with `SNAPTRADE_WEBHOOK_SECRET` when set.
 
-Things to verify against your SnapTrade dashboard on first run (they come from SnapTrade's public docs and could not be exercised without live credentials here): the exact brokerage slug for Wealthsimple, the SDK version's constructor form (both `{ consumerKey, clientId }` and `SnaptradeAuth.commercialApiKey(...)` are handled), and the webhook payload field names.
+The wrapper is typed against `snaptrade-typescript-sdk` 12.2.0's own declarations. Two things still deserve a glance in your SnapTrade dashboard on first live run: the exact brokerage slug for Wealthsimple (resolved by name unless pinned) and the webhook payload field names.
 
 ---
 

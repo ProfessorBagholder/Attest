@@ -10,6 +10,7 @@ import {
   listAuthorizations,
   listPositions,
   registerUser,
+  requestTransactionSync,
   resolveWealthsimpleSlug,
   type SnapTradeAccount,
   type SnapTradeAuthorization,
@@ -201,21 +202,25 @@ export async function syncPositions(accountDbId: string, credentials: SnapTradeC
   await prisma.position.deleteMany({ where: { accountId: accountDbId } });
   const rows: Prisma.PositionCreateManyInput[] = [];
   for (const position of positions) {
-    const units = Number(position.units ?? 0);
+    const units = toNumber(position.units);
     if (!units) continue;
-    const symbol = position.symbol?.option_symbol?.ticker ?? position.symbol?.symbol?.symbol ?? position.symbol?.symbol?.raw_symbol;
-    if (!symbol) continue;
+    const instrument = position.instrument;
+    const isOption = instrument.kind === "option";
+    const multiplier = isOption ? toNumber(instrument.multiplier) || 100 : 1;
+    const price = toNumber(position.price);
+    const costBasis = toNumber(position.cost_basis);
+    const currency = (position.currency ?? (isOption ? instrument.underlying?.currency : instrument.currency) ?? "CAD").toUpperCase();
     rows.push({
       accountId: accountDbId,
-      symbol,
-      description: position.symbol?.symbol?.description ?? null,
-      securityType: position.symbol?.symbol?.type?.code ?? (position.symbol?.option_symbol ? "option" : null),
-      currency: (position.currency?.code ?? position.symbol?.symbol?.currency?.code ?? "CAD").toUpperCase(),
+      symbol: instrument.symbol,
+      description: instrument.description ?? null,
+      securityType: instrument.kind,
+      currency,
       units,
-      price: position.price ?? null,
-      averagePurchasePrice: position.average_purchase_price ?? null,
-      openPnl: position.open_pnl ?? null,
-      isOption: Boolean(position.symbol?.option_symbol),
+      price,
+      averagePurchasePrice: costBasis,
+      openPnl: price !== null && costBasis !== null ? round((price - costBasis) * units * multiplier) : null,
+      isOption,
     });
   }
   if (rows.length) await prisma.position.createMany({ data: rows, skipDuplicates: true });
@@ -260,6 +265,11 @@ export async function syncAccount(accountDbId: string, trigger: string): Promise
 
 export async function syncUser(userId: string, trigger: string): Promise<{ accounts: number; errors: string[] }> {
   await discoverConnections(userId);
+  const credentials = await snaptradeCredentials(userId);
+  if (credentials && (trigger === "manual" || trigger === "cron" || trigger === "cli")) {
+    const active = await prisma.brokerConnection.findMany({ where: { userId, status: "ACTIVE", snaptradeAuthorizationId: { not: { startsWith: "demo-" } } } });
+    for (const connection of active) await requestTransactionSync(credentials, connection.snaptradeAuthorizationId).catch(() => undefined);
+  }
   const accounts = await prisma.account.findMany({ where: { userId, connection: { status: "ACTIVE" } } });
   const errors: string[] = [];
   for (const account of accounts) {
@@ -383,4 +393,10 @@ async function upsertTrade(
 
 function round(value: number): number {
   return Math.round(value * 1e6) / 1e6;
+}
+
+function toNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }

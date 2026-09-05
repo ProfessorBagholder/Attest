@@ -4,20 +4,20 @@
   "private": true,
   "description": "Broker-verified trading journal, analytics and trader verification (Wealthsimple via SnapTrade)",
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=22.6.0"
   },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"src/engine/__tests__/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"src/engine/__tests__/*.test.ts\"",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "seed:demo": "node --env-file=.env scripts/seed-demo.ts",
-    "sync": "node --env-file=.env scripts/sync-all.ts"
+    "seed:demo": "node --experimental-strip-types --env-file=.env scripts/seed-demo.ts",
+    "sync": "node --experimental-strip-types --env-file=.env scripts/sync-all.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.7.0",

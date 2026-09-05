@@ -1,30 +1,14 @@
-import * as Sdk from "snaptrade-typescript-sdk";
+import { Snaptrade, SnaptradeAuth, type CommercialApiKeyAuth } from "snaptrade-typescript-sdk";
+import type { AccountPosition, AccountUniversalActivity, Balance, Brokerage, BrokerageAuthorization, PaginatedUniversalActivity } from "snaptrade-typescript-sdk";
 import type { SnapTradeActivity } from "../engine/normalize.ts";
 import { requireEnv } from "./env.ts";
 
 export type SnapTradeCredentials = { userId: string; userSecret: string };
 
-export type SnapTradeBrokerage = {
-  id?: string;
-  slug?: string;
-  name?: string;
-  display_name?: string;
-  enabled?: boolean;
-  maintenance_mode?: boolean;
-  allows_trading?: boolean;
-};
-
-export type SnapTradeAuthorization = {
-  id: string;
-  created_date?: string | null;
-  updated_date?: string | null;
-  name?: string | null;
-  type?: string | null;
-  disabled?: boolean | null;
-  disabled_date?: string | null;
-  brokerage?: SnapTradeBrokerage | null;
-  meta?: Record<string, unknown> | null;
-};
+export type SnapTradeBrokerage = Brokerage;
+export type SnapTradeAuthorization = BrokerageAuthorization & { id: string };
+export type SnapTradePosition = AccountPosition;
+export type SnapTradeBalance = Balance;
 
 export type SnapTradeAccount = {
   id: string;
@@ -43,62 +27,28 @@ export type SnapTradeAccount = {
   meta?: Record<string, unknown> | null;
 };
 
-export type SnapTradePosition = {
-  symbol?: {
-    symbol?: {
-      symbol?: string | null;
-      raw_symbol?: string | null;
-      description?: string | null;
-      currency?: { code?: string | null } | null;
-      type?: { code?: string | null; description?: string | null } | null;
-    } | null;
-    option_symbol?: { ticker?: string | null } | null;
-  } | null;
-  units?: number | null;
-  price?: number | null;
-  open_pnl?: number | null;
-  average_purchase_price?: number | null;
-  currency?: { code?: string | null } | null;
-};
-
-export type SnapTradeBalance = {
-  currency?: { code?: string | null } | null;
-  cash?: number | null;
-  buying_power?: number | null;
-};
-
 export type ActivitiesPage = {
   data: SnapTradeActivity[];
   pagination: { offset: number; limit: number; total: number };
 };
 
-type SdkModule = typeof Sdk & {
-  SnaptradeAuth?: { commercialApiKey(input: { consumerKey: string; clientId: string }): unknown };
-};
+let cached: Snaptrade<CommercialApiKeyAuth> | null = null;
 
-let cached: Sdk.Snaptrade | null = null;
-
-export function snaptrade(): Sdk.Snaptrade {
+export function snaptrade(): Snaptrade<CommercialApiKeyAuth> {
   if (cached) return cached;
-  const clientId = requireEnv("SNAPTRADE_CLIENT_ID");
-  const consumerKey = requireEnv("SNAPTRADE_CONSUMER_KEY");
-  const mod = Sdk as SdkModule;
-  const Ctor = Sdk.Snaptrade as unknown as new (config: Record<string, unknown>) => Sdk.Snaptrade;
-  cached = mod.SnaptradeAuth
-    ? new Ctor({ auth: mod.SnaptradeAuth.commercialApiKey({ consumerKey, clientId }) })
-    : new Ctor({ consumerKey, clientId });
+  cached = new Snaptrade({
+    auth: SnaptradeAuth.commercialApiKey({
+      clientId: requireEnv("SNAPTRADE_CLIENT_ID"),
+      consumerKey: requireEnv("SNAPTRADE_CONSUMER_KEY"),
+    }),
+  });
   return cached;
-}
-
-function unwrap<T>(response: unknown): T {
-  const body = (response as { data?: unknown })?.data;
-  return (body === undefined ? response : body) as T;
 }
 
 export async function registerUser(userId: string): Promise<SnapTradeCredentials> {
   const response = await snaptrade().authentication.registerSnapTradeUser({ userId });
-  const body = unwrap<{ userId: string; userSecret: string }>(response);
-  if (!body.userSecret) throw new Error("SnapTrade did not return a userSecret");
+  const body = response.data as { userId?: string; userSecret?: string };
+  if (!body.userId || !body.userSecret) throw new Error("SnapTrade did not return a userSecret");
   return { userId: body.userId, userSecret: body.userSecret };
 }
 
@@ -120,42 +70,46 @@ export async function createPortalUrl(
     connectionType: "read",
     connectionPortalVersion: "v4",
   });
-  const body = unwrap<{ redirectURI?: string; sessionId?: string }>(response);
+  const body = response.data as { redirectURI?: string; sessionId?: string };
   if (!body.redirectURI) throw new Error("SnapTrade did not return a redirectURI");
   return { redirectURI: body.redirectURI, sessionId: body.sessionId };
 }
 
 export async function listAuthorizations(credentials: SnapTradeCredentials): Promise<SnapTradeAuthorization[]> {
   const response = await snaptrade().connections.listBrokerageAuthorizations(credentials);
-  return unwrap<SnapTradeAuthorization[]>(response) ?? [];
+  return (response.data ?? []).filter((auth): auth is SnapTradeAuthorization => typeof auth.id === "string");
 }
 
-export async function getAuthorization(credentials: SnapTradeCredentials, authorizationId: string): Promise<SnapTradeAuthorization> {
+export async function getAuthorization(credentials: SnapTradeCredentials, authorizationId: string): Promise<BrokerageAuthorization> {
   const response = await snaptrade().connections.detailBrokerageAuthorization({ ...credentials, authorizationId });
-  return unwrap<SnapTradeAuthorization>(response);
+  return response.data;
 }
 
 export async function removeAuthorization(credentials: SnapTradeCredentials, authorizationId: string): Promise<void> {
-  await snaptrade().connections.removeBrokerageAuthorization({ ...credentials, authorizationId });
+  await snaptrade().connections.deleteConnection({ ...credentials, connectionId: authorizationId });
 }
 
 export async function refreshAuthorization(credentials: SnapTradeCredentials, authorizationId: string): Promise<void> {
   await snaptrade().connections.refreshBrokerageAuthorization({ ...credentials, authorizationId });
 }
 
+export async function requestTransactionSync(credentials: SnapTradeCredentials, authorizationId: string): Promise<void> {
+  await snaptrade().connections.syncBrokerageAuthorizationTransactions({ ...credentials, authorizationId });
+}
+
 export async function listAccounts(credentials: SnapTradeCredentials): Promise<SnapTradeAccount[]> {
   const response = await snaptrade().accountInformation.listUserAccounts(credentials);
-  return unwrap<SnapTradeAccount[]>(response) ?? [];
+  return (response.data ?? []) as unknown as SnapTradeAccount[];
 }
 
 export async function listPositions(credentials: SnapTradeCredentials, accountId: string): Promise<SnapTradePosition[]> {
-  const response = await snaptrade().accountInformation.getUserAccountPositions({ ...credentials, accountId });
-  return unwrap<SnapTradePosition[]>(response) ?? [];
+  const response = await snaptrade().accountInformation.getAllAccountPositions({ ...credentials, accountId });
+  return response.data?.results ?? [];
 }
 
 export async function listBalances(credentials: SnapTradeCredentials, accountId: string): Promise<SnapTradeBalance[]> {
   const response = await snaptrade().accountInformation.getUserAccountBalance({ ...credentials, accountId });
-  return unwrap<SnapTradeBalance[]>(response) ?? [];
+  return response.data ?? [];
 }
 
 export async function listActivitiesPage(
@@ -171,13 +125,10 @@ export async function listActivitiesPage(
     offset: options.offset,
     limit: options.limit,
   });
-  const body = unwrap<{ data?: SnapTradeActivity[]; pagination?: { offset?: number; limit?: number; total?: number } } | SnapTradeActivity[]>(response);
-  if (Array.isArray(body)) {
-    return { data: body, pagination: { offset: options.offset, limit: options.limit, total: options.offset + body.length } };
-  }
-  const data = body.data ?? [];
+  const body: PaginatedUniversalActivity = response.data ?? {};
+  const data = (body.data ?? []) as AccountUniversalActivity[];
   return {
-    data,
+    data: data as SnapTradeActivity[],
     pagination: {
       offset: body.pagination?.offset ?? options.offset,
       limit: body.pagination?.limit ?? options.limit,
@@ -204,7 +155,7 @@ export async function* iterateActivities(
 
 export async function listBrokerages(): Promise<SnapTradeBrokerage[]> {
   const response = await snaptrade().referenceData.listAllBrokerages();
-  return unwrap<SnapTradeBrokerage[]>(response) ?? [];
+  return response.data ?? [];
 }
 
 let wealthsimpleSlug: string | null = null;
