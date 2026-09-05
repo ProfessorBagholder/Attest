@@ -48,7 +48,8 @@ function withTime(dayKey: string, random: () => number, timed: boolean): string 
   return `${dayKey}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(Math.floor(random() * 60)).padStart(2, "0")}.000Z`;
 }
 
-function activity(kind: "BUY" | "SELL", inst: Instrument, units: number, price: number, at: string, fee = 0): SnapTradeActivity {
+function activity(kind: "BUY" | "SELL", inst: Instrument, units: number, rawPrice: number, at: string, fee = 0): SnapTradeActivity {
+  const price = Math.round(rawPrice * 100) / 100;
   const amount = (kind === "BUY" ? -1 : 1) * units * price - fee;
   return {
     id: `demo-${Math.random().toString(36).slice(2)}`,
@@ -62,7 +63,7 @@ function activity(kind: "BUY" | "SELL", inst: Instrument, units: number, price: 
       type: { code: inst.type, description: inst.type === "cs" ? "Common Stock" : "Exchange Traded Fund" },
     },
     option_symbol: null,
-    price: Math.round(price * 100) / 100,
+    price,
     units: kind === "SELL" ? -units : units,
     amount: Math.round(amount * 100) / 100,
     currency: { code: inst.currency },
