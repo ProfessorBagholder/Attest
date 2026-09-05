@@ -19,3 +19,9 @@ export function defaultBaseCurrency(): string {
 export function snaptradeConfigured(): boolean {
   return Boolean(process.env.SNAPTRADE_CLIENT_ID && process.env.SNAPTRADE_CONSUMER_KEY);
 }
+
+export type SnapTradeAuthMode = "commercial" | "personal";
+
+export function snaptradeAuthMode(): SnapTradeAuthMode {
+  return (process.env.SNAPTRADE_AUTH_MODE ?? "commercial").toLowerCase() === "personal" ? "personal" : "commercial";
+}

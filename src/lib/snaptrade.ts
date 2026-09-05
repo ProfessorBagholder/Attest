@@ -1,9 +1,22 @@
-import { Snaptrade, SnaptradeAuth, type CommercialApiKeyAuth } from "snaptrade-typescript-sdk";
+import { Snaptrade, SnaptradeAuth, type AuthMode } from "snaptrade-typescript-sdk";
 import type { AccountPosition, AccountUniversalActivity, Balance, Brokerage, BrokerageAuthorization, PaginatedUniversalActivity } from "snaptrade-typescript-sdk";
 import type { SnapTradeActivity } from "../engine/normalize.ts";
-import { requireEnv } from "./env.ts";
+import { requireEnv, snaptradeAuthMode } from "./env.ts";
 
-export type SnapTradeCredentials = { userId: string; userSecret: string };
+export type SnapTradeCredentials = { userId: string; userSecret: string } | { personal: true };
+
+type UserParams = { userId: string; userSecret: string } | { userId?: undefined; userSecret?: undefined };
+
+export const PERSONAL_OWNER_ID = "personal-key-owner";
+
+export function isPersonal(credentials: SnapTradeCredentials): credentials is { personal: true } {
+  return "personal" in credentials;
+}
+
+function userParams(credentials: SnapTradeCredentials): UserParams {
+  if (isPersonal(credentials)) return {};
+  return { userId: credentials.userId, userSecret: credentials.userSecret };
+}
 
 export type SnapTradeBrokerage = Brokerage;
 export type SnapTradeAuthorization = BrokerageAuthorization & { id: string };
@@ -32,20 +45,18 @@ export type ActivitiesPage = {
   pagination: { offset: number; limit: number; total: number };
 };
 
-let cached: Snaptrade<CommercialApiKeyAuth> | null = null;
+let cached: Snaptrade<AuthMode> | null = null;
 
-export function snaptrade(): Snaptrade<CommercialApiKeyAuth> {
+export function snaptrade(): Snaptrade<AuthMode> {
   if (cached) return cached;
-  cached = new Snaptrade({
-    auth: SnaptradeAuth.commercialApiKey({
-      clientId: requireEnv("SNAPTRADE_CLIENT_ID"),
-      consumerKey: requireEnv("SNAPTRADE_CONSUMER_KEY"),
-    }),
-  });
+  const keys = { clientId: requireEnv("SNAPTRADE_CLIENT_ID"), consumerKey: requireEnv("SNAPTRADE_CONSUMER_KEY") };
+  const auth: AuthMode = snaptradeAuthMode() === "personal" ? SnaptradeAuth.personalApiKey(keys) : SnaptradeAuth.commercialApiKey(keys);
+  cached = new Snaptrade<AuthMode>({ auth });
   return cached;
 }
 
 export async function registerUser(userId: string): Promise<SnapTradeCredentials> {
+  if (snaptradeAuthMode() === "personal") return { personal: true };
   const response = await snaptrade().authentication.registerSnapTradeUser({ userId });
   const body = response.data as { userId?: string; userSecret?: string };
   if (!body.userId || !body.userSecret) throw new Error("SnapTrade did not return a userSecret");
@@ -53,6 +64,7 @@ export async function registerUser(userId: string): Promise<SnapTradeCredentials
 }
 
 export async function deleteUser(userId: string): Promise<void> {
+  if (snaptradeAuthMode() === "personal") return;
   await snaptrade().authentication.deleteSnapTradeUser({ userId });
 }
 
@@ -61,8 +73,7 @@ export async function createPortalUrl(
   options: { broker?: string; customRedirect: string; reconnect?: string; immediateRedirect?: boolean },
 ): Promise<{ redirectURI: string; sessionId?: string }> {
   const response = await snaptrade().authentication.loginSnapTradeUser({
-    userId: credentials.userId,
-    userSecret: credentials.userSecret,
+    ...userParams(credentials),
     broker: options.broker,
     immediateRedirect: options.immediateRedirect ?? true,
     customRedirect: options.customRedirect,
@@ -76,39 +87,39 @@ export async function createPortalUrl(
 }
 
 export async function listAuthorizations(credentials: SnapTradeCredentials): Promise<SnapTradeAuthorization[]> {
-  const response = await snaptrade().connections.listBrokerageAuthorizations(credentials);
+  const response = await snaptrade().connections.listBrokerageAuthorizations(userParams(credentials));
   return (response.data ?? []).filter((auth): auth is SnapTradeAuthorization => typeof auth.id === "string");
 }
 
 export async function getAuthorization(credentials: SnapTradeCredentials, authorizationId: string): Promise<BrokerageAuthorization> {
-  const response = await snaptrade().connections.detailBrokerageAuthorization({ ...credentials, authorizationId });
+  const response = await snaptrade().connections.detailBrokerageAuthorization({ ...userParams(credentials), authorizationId });
   return response.data;
 }
 
 export async function removeAuthorization(credentials: SnapTradeCredentials, authorizationId: string): Promise<void> {
-  await snaptrade().connections.deleteConnection({ ...credentials, connectionId: authorizationId });
+  await snaptrade().connections.deleteConnection({ ...userParams(credentials), connectionId: authorizationId });
 }
 
 export async function refreshAuthorization(credentials: SnapTradeCredentials, authorizationId: string): Promise<void> {
-  await snaptrade().connections.refreshBrokerageAuthorization({ ...credentials, authorizationId });
+  await snaptrade().connections.refreshBrokerageAuthorization({ ...userParams(credentials), authorizationId });
 }
 
 export async function requestTransactionSync(credentials: SnapTradeCredentials, authorizationId: string): Promise<void> {
-  await snaptrade().connections.syncBrokerageAuthorizationTransactions({ ...credentials, authorizationId });
+  await snaptrade().connections.syncBrokerageAuthorizationTransactions({ ...userParams(credentials), authorizationId });
 }
 
 export async function listAccounts(credentials: SnapTradeCredentials): Promise<SnapTradeAccount[]> {
-  const response = await snaptrade().accountInformation.listUserAccounts(credentials);
+  const response = await snaptrade().accountInformation.listUserAccounts(userParams(credentials));
   return (response.data ?? []) as unknown as SnapTradeAccount[];
 }
 
 export async function listPositions(credentials: SnapTradeCredentials, accountId: string): Promise<SnapTradePosition[]> {
-  const response = await snaptrade().accountInformation.getAllAccountPositions({ ...credentials, accountId });
+  const response = await snaptrade().accountInformation.getAllAccountPositions({ ...userParams(credentials), accountId });
   return response.data?.results ?? [];
 }
 
 export async function listBalances(credentials: SnapTradeCredentials, accountId: string): Promise<SnapTradeBalance[]> {
-  const response = await snaptrade().accountInformation.getUserAccountBalance({ ...credentials, accountId });
+  const response = await snaptrade().accountInformation.getUserAccountBalance({ ...userParams(credentials), accountId });
   return response.data ?? [];
 }
 
@@ -118,7 +129,7 @@ export async function listActivitiesPage(
   options: { startDate?: string; endDate?: string; offset: number; limit: number },
 ): Promise<ActivitiesPage> {
   const response = await snaptrade().accountInformation.getAccountActivities({
-    ...credentials,
+    ...userParams(credentials),
     accountId,
     startDate: options.startDate,
     endDate: options.endDate,

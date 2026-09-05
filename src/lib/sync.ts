@@ -1,9 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./db.ts";
 import { decryptSecret, encryptSecret } from "./crypto.ts";
-import { appUrl } from "./env.ts";
+import { appUrl, snaptradeAuthMode } from "./env.ts";
 import { loadRateTable, syncFxRates } from "./fx.ts";
 import {
+  PERSONAL_OWNER_ID,
   createPortalUrl,
   iterateActivities,
   listAccounts,
@@ -25,6 +26,7 @@ const OVERLAP_DAYS = 14;
 
 export async function snaptradeCredentials(userId: string): Promise<SnapTradeCredentials | null> {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { snaptradeUserId: true, snaptradeUserSecret: true } });
+  if (snaptradeAuthMode() === "personal") return user.snaptradeUserId === PERSONAL_OWNER_ID ? { personal: true } : null;
   if (!user.snaptradeUserId || !user.snaptradeUserSecret) return null;
   return { userId: user.snaptradeUserId, userSecret: decryptSecret(user.snaptradeUserSecret) };
 }
@@ -32,7 +34,14 @@ export async function snaptradeCredentials(userId: string): Promise<SnapTradeCre
 export async function ensureSnapTradeUser(userId: string): Promise<SnapTradeCredentials> {
   const existing = await snaptradeCredentials(userId);
   if (existing) return existing;
+  if (snaptradeAuthMode() === "personal") {
+    const owner = await prisma.user.findFirst({ where: { snaptradeUserId: PERSONAL_OWNER_ID }, select: { username: true } });
+    if (owner) throw new Error(`This server uses a personal SnapTrade key, which supports one linked account (@${owner.username}). Switch to a commercial key to let more users connect.`);
+    await prisma.user.update({ where: { id: userId }, data: { snaptradeUserId: PERSONAL_OWNER_ID, snaptradeUserSecret: null } });
+    return { personal: true };
+  }
   const registered = await registerUser(`attest-${userId}`);
+  if ("personal" in registered) return registered;
   await prisma.user.update({
     where: { id: userId },
     data: { snaptradeUserId: registered.userId, snaptradeUserSecret: encryptSecret(registered.userSecret) },

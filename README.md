@@ -11,7 +11,7 @@ Stack: Next.js 15 (App Router, server actions), TypeScript, Tailwind, Prisma + P
 ```bash
 cp .env.example .env
 # fill in APP_ENCRYPTION_KEY (node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
-# fill in SNAPTRADE_CLIENT_ID / SNAPTRADE_CONSUMER_KEY when you have them
+# fill in SNAPTRADE_CLIENT_ID / SNAPTRADE_CONSUMER_KEY and SNAPTRADE_AUTH_MODE (personal | commercial)
 
 docker compose up -d          # PostgreSQL 16 on localhost:5432
 npm install
@@ -114,7 +114,12 @@ Modelled on Kinfo's rating: one star for a profitable trailing **30-day** window
 
 Everything SnapTrade-specific is in `src/lib/snaptrade.ts` (thin wrapper around the official SDK) and `src/lib/sync.ts`.
 
-Connection flow:
+Two key types, selected with `SNAPTRADE_AUTH_MODE`:
+
+* **`personal`** — a Personal API key from the SnapTrade dashboard. No SnapTrade user is registered and no `userId`/`userSecret` is sent; the SDK is constructed with `SnaptradeAuth.personalApiKey`. All brokerage connections under the key belong to the *first* Attest account that clicks Connect (marked `snaptradeUserId = "personal-key-owner"`); other accounts get a clear error. Personal keys allow up to 20 connections and every supported brokerage except Tradier. This is the mode to use for your own journal.
+* **`commercial`** — a Commercial key. Each Attest account gets its own SnapTrade user (`registerSnapTradeUser`, secret encrypted at rest), so many traders can connect independently. Needed for the multi-user leaderboard in production.
+
+Connection flow (commercial; personal skips step 1):
 
 1. First connect: `authentication.registerSnapTradeUser({ userId: "attest-<id>" })`. The returned `userSecret` is encrypted with `APP_ENCRYPTION_KEY` (AES-256-GCM) before it is stored.
 2. `authentication.loginSnapTradeUser({ broker, connectionType: "read", immediateRedirect: true, customRedirect: APP_URL + "/connect/callback", reconnect? })` → the user is sent to the returned `redirectURI` (valid 5 minutes). The `broker` slug is resolved at runtime by searching `referenceData.listAllBrokerages()` for "Wealthsimple"; set `SNAPTRADE_WEALTHSIMPLE_SLUG` to pin it.

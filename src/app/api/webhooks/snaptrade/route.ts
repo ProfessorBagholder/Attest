@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { snaptradeAuthMode } from "@/lib/env";
+import { PERSONAL_OWNER_ID } from "@/lib/snaptrade";
 import { discoverConnections, syncAccount, syncUser } from "@/lib/sync";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +21,10 @@ export async function POST(request: Request) {
   if (!body) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   const expected = process.env.SNAPTRADE_WEBHOOK_SECRET;
   if (expected && body.webhookSecret !== expected) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!body.userId) return NextResponse.json({ ok: true, ignored: "no userId" });
+  const personal = snaptradeAuthMode() === "personal";
+  if (!body.userId && !personal) return NextResponse.json({ ok: true, ignored: "no userId" });
 
-  const user = await prisma.user.findUnique({ where: { snaptradeUserId: body.userId }, select: { id: true } });
+  const user = await prisma.user.findFirst({ where: { snaptradeUserId: personal ? PERSONAL_OWNER_ID : body.userId }, select: { id: true } });
   if (!user) return NextResponse.json({ ok: true, ignored: "unknown user" });
 
   const event = (body.eventType ?? "").toUpperCase();
